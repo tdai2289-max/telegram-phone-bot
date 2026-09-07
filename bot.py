@@ -7,6 +7,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove
 )
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -17,6 +18,11 @@ from telegram.ext import (
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_ID = 5257699798
+
+
+# =========================
+# DATABASE
+# =========================
 
 conn = sqlite3.connect("users.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -34,21 +40,32 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
-# Nếu database cũ chưa có 2 cột này thì tự thêm
+# Tự thêm cột nếu đang dùng database cũ
 try:
-    cursor.execute("ALTER TABLE users ADD COLUMN character_name TEXT")
-except:
+    cursor.execute(
+        "ALTER TABLE users ADD COLUMN character_name TEXT"
+    )
+except sqlite3.OperationalError:
     pass
 
 try:
-    cursor.execute("ALTER TABLE users ADD COLUMN game_name TEXT")
-except:
+    cursor.execute(
+        "ALTER TABLE users ADD COLUMN game_name TEXT"
+    )
+except sqlite3.OperationalError:
     pass
 
 conn.commit()
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# /START
+# =========================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     button = KeyboardButton(
         "📱 Chia sẻ số điện thoại",
         request_contact=True
@@ -61,22 +78,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        "Bấm nút bên dưới để chia sẻ số điện thoại:",
+        "🎁 Để nhận code, vui lòng chia sẻ số điện thoại của bạn.",
         reply_markup=keyboard
     )
 
 
-async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# /MYID
+# =========================
+
+async def myid(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     await update.message.reply_text(
         f"ID Telegram của bạn: {update.effective_user.id}"
     )
 
 
-async def get_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# NHẬN SỐ ĐIỆN THOẠI
+# =========================
+
+async def get_contact(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     user = update.effective_user
     contact = update.message.contact
 
-    if contact.user_id != user.id:
+    # Chỉ nhận SĐT của chính người đang dùng bot
+    if not contact.user_id or contact.user_id != user.id:
         await update.message.reply_text(
             "❌ Vui lòng chia sẻ số điện thoại của chính bạn."
         )
@@ -108,40 +140,52 @@ async def get_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn.commit()
 
+    # Đánh dấu bot đang chờ người này gửi tên nhân vật/game
     context.user_data["waiting_game_info"] = True
 
     await update.message.reply_text(
-        "🎮 Bạn cần gửi tên nhân vật và tên game để nhận code.\n\n"
+        "🎮 Bạn cần gửi tên nhân vật và tên game mình chơi để nhận code.\n\n"
         "Gửi theo mẫu:\n"
-        "Tên nhân vật | Tên game\n\n"
+        "Tên nhân vật / Tên game\n\n"
         "Ví dụ:\n"
-        "AnhDepTrai | Free Fire",
+        "Ronaldo123 / FC Mobile",
         reply_markup=ReplyKeyboardRemove()
     )
 
 
-async def get_game_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# NHẬN TÊN NHÂN VẬT + GAME
+# =========================
+
+async def get_game_info(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if not context.user_data.get("waiting_game_info"):
         return
 
     text = update.message.text.strip()
 
-    if "|" not in text:
+    if "/" not in text:
         await update.message.reply_text(
             "❌ Sai định dạng.\n\n"
             "Hãy gửi theo mẫu:\n"
-            "Tên nhân vật | Tên game"
+            "Tên nhân vật / Tên game\n\n"
+            "Ví dụ:\n"
+            "Ronaldo123 / FC Mobile"
         )
         return
 
-    character_name, game_name = text.split("|", 1)
+    character_name, game_name = text.split("/", 1)
 
     character_name = character_name.strip()
     game_name = game_name.strip()
 
     if not character_name or not game_name:
         await update.message.reply_text(
-            "❌ Vui lòng nhập đầy đủ tên nhân vật và tên game."
+            "❌ Bạn cần nhập đầy đủ tên nhân vật và tên game.\n\n"
+            "Ví dụ:\n"
+            "Ronaldo123 / FC Mobile"
         )
         return
 
@@ -149,7 +193,8 @@ async def get_game_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cursor.execute("""
         UPDATE users
-        SET character_name = ?, game_name = ?
+        SET character_name = ?,
+            game_name = ?
         WHERE telegram_id = ?
     """, (
         character_name,
@@ -162,13 +207,23 @@ async def get_game_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_game_info"] = False
 
     await update.message.reply_text(
-        "✅ Đã nhận thông tin. Vui lòng chờ admin gửi code."
+        "✅ Đã nhận thông tin.\n"
+        "Vui lòng chờ admin kiểm tra và gửi code."
     )
 
 
-async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# /USERS - ADMIN
+# =========================
+
+async def users(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Không có quyền.")
+        await update.message.reply_text(
+            "❌ Bạn không có quyền sử dụng lệnh này."
+        )
         return
 
     cursor.execute("""
@@ -176,6 +231,7 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
             telegram_id,
             username,
             first_name,
+            last_name,
             phone,
             character_name,
             game_name,
@@ -187,23 +243,45 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = cursor.fetchall()
 
     if not rows:
-        await update.message.reply_text("Chưa có người dùng nào.")
+        await update.message.reply_text(
+            "Chưa có người dùng nào."
+        )
         return
 
-    text = f"📋 Tổng: {len(rows)} người\n\n"
+    text = f"📋 Tổng cộng: {len(rows)} người\n\n"
 
     for row in rows:
-        telegram_id, username, first_name, phone, character_name, game_name, created_at = row
+        (
+            telegram_id,
+            username,
+            first_name,
+            last_name,
+            phone,
+            character_name,
+            game_name,
+            created_at
+        ) = row
+
+        full_name = " ".join(
+            x for x in [first_name, last_name] if x
+        )
+
+        username_text = (
+            f"@{username}"
+            if username
+            else "Không có"
+        )
 
         item = (
-            f"👤 {first_name or 'Không tên'}\n"
-            f"🆔 {telegram_id}\n"
-            f"🔗 @{username if username else 'không có'}\n"
-            f"📱 {phone or 'Chưa có'}\n"
+            f"👤 {full_name or 'Không tên'}\n"
+            f"🆔 ID: {telegram_id}\n"
+            f"🔗 Username: {username_text}\n"
+            f"📱 SĐT: {phone or 'Chưa có'}\n"
+            f"🕹 Tên nhân vật: "
+            f"{character_name or 'Chưa nhập'}\n"
             f"🎮 Game: {game_name or 'Chưa nhập'}\n"
-            f"🕹 Tên nhân vật: {character_name or 'Chưa nhập'}\n"
-            f"🕒 {created_at}\n"
-            "────────────\n"
+            f"🕒 Thời gian: {created_at}\n"
+            "────────────────\n"
         )
 
         if len(text) + len(item) > 3800:
@@ -216,29 +294,59 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
 
 
-async def count_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# /COUNT - ADMIN
+# =========================
+
+async def count_users(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Không có quyền.")
+        await update.message.reply_text(
+            "❌ Bạn không có quyền sử dụng lệnh này."
+        )
         return
 
-    cursor.execute("SELECT COUNT(*) FROM users")
+    cursor.execute(
+        "SELECT COUNT(*) FROM users"
+    )
+
     count = cursor.fetchone()[0]
 
     await update.message.reply_text(
-        f"👥 Có {count} người."
+        f"👥 Tổng cộng có {count} người đã đăng ký."
     )
 
+
+# =========================
+# RUN BOT
+# =========================
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myid", myid))
-    app.add_handler(CommandHandler("users", users))
-    app.add_handler(CommandHandler("count", count_users))
+    app.add_handler(
+        CommandHandler("start", start)
+    )
 
     app.add_handler(
-        MessageHandler(filters.CONTACT, get_contact)
+        CommandHandler("myid", myid)
+    )
+
+    app.add_handler(
+        CommandHandler("users", users)
+    )
+
+    app.add_handler(
+        CommandHandler("count", count_users)
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.CONTACT,
+            get_contact
+        )
     )
 
     app.add_handler(
